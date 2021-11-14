@@ -329,14 +329,45 @@ def plot_2dhist(true, predicted, xymin, xymax, quantity, weights, gen_filename="
     imgname = gen_filename + file_abbrev(quantity) + "_2D.png"
     plt.savefig(imgname)
 
-def plot_1dhist(true, predicted, minimum, maximum, quantity, weights, gen_filename="path/save_folder/"):
+#2d hist without assumption that you are plotting truth vs predicted
+#Useful to show the distributions of two variables like dx pred, dy pred
+def plot_2dcomp(var1, var2, xmin, ymin, xmax, ymax, quantity1, quantity2, weights, gen_filename="path/save_folder/"):
+    plt.figure()
+    plt.title(strip_units(quantity1) + " vs " + strip_units(quantity2))
+    plt.xlabel(quantity1)
+    plt.ylabel(quantity2)
+    plt.hist2d(var1, var2, weights=weights, bins=100, range=[[xmin,xmax],[ymin,ymax]], norm=matplotlib.colors.LogNorm())
+    bar = plt.colorbar()
+    bar.set_label("Counts")
+    imgname = gen_filename + file_abbrev(quantity1) + "_vs_" + file_abbrev(quantity2) + "_2D.png"
+    plt.savefig(imgname)
+
+def plot_1dhist(true, predicted, minimum, maximum, quantity, weights, log = False, gen_filename="path/save_folder/"):
     plt.figure()
     plt.title("Predicted vs. True " + strip_units(quantity))
     plt.xlabel(quantity)
+    if log:
+        plt.yscale('log')
     plt.hist(true, bins=100, range=[minimum,maximum], histtype="step", weights=weights, label="True")
     plt.hist(predicted, bins=100, range=[minimum,maximum], histtype="step", weights=weights, label="Predicted")
     plt.legend(loc="best")
     imgname = gen_filename + file_abbrev(quantity) + "_1D.png"
+    plt.savefig(imgname)
+ 
+def plot_cut1d(cut, dset, minimum, maximum, quantity, cut_weights, uncut_weights, log = False, gen_filename="path/save_folder/", density = False):
+    plt.figure()
+    plt.title("Cut Events vs. Entire Dataset " + strip_units(quantity))
+    plt.xlabel(quantity)
+    if log:
+        plt.yscale('log')
+        plt.xscale('log')
+        bins = np.logspace(np.log10(minimum), np.log10(maximum), 100)
+    else:
+        bins=np.linspace(minimum, maximum, 100) 
+    plt.hist(cut, bins=bins, histtype="step", weights=cut_weights, label="Cut Events", density = density)
+    plt.hist(dset, bins=bins, range=[minimum,maximum], histtype="step", weights=uncut_weights, label="Sample", density = density)
+    plt.legend(loc="best")
+    imgname = gen_filename + 'cut_' + file_abbrev(quantity) + "_1D.png"
     plt.savefig(imgname)
 
 def plot_inputs(pulse_time_data, pulse_charge_data, num_use, log_charge=False, gen_filename="/path/save_folder/"):

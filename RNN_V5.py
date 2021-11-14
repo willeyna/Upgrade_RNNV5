@@ -1,7 +1,7 @@
+import numpy as np
+from matplotlib import pyplot as plt
 import matplotlib
 matplotlib.use("agg")
-from matplotlib import pyplot as plt
-import numpy as np
 import h5py
 import scipy.stats
 import glob
@@ -10,11 +10,13 @@ import sys
 import math
 import argparse
 
+os.environ['KERAS_BACKEND'] = 'tensorflow'
+import keras
+
 from Generators_V5 import DataGenerator, SplitGenerator
 from Attention import AttentionWithContext
-from Plots import plot_uncertainty, plot_uncertainty_2d, plot_2dhist, plot_2dhist_contours, plot_1dhist, plot_error, plot_error_contours, plot_loss, plot_error_vs_reco, plot_inputs, plot_outputs
+from Plots import plot_uncertainty, plot_uncertainty_2d, plot_2dhist, plot_2dhist_contours, plot_1dhist, plot_error, plot_error_contours, plot_loss, plot_error_vs_reco, plot_inputs, plot_outputs, plot_2dcomp, plot_cut1d
 
-import keras
 import tensorflow as tf
 from keras.utils.generic_utils import Progbar
 from keras import backend as K, initializers, regularizers, constraints
@@ -151,8 +153,10 @@ def main(config=1):
     parser.add_argument("-c", "--checkpoints", type=int,default=0, dest="checkpoints", help="use training checkpoints from previous run")
     parser.add_argument("-w", "--weights", type=int,default=1, dest="weights", help="use sample weights for training")
     parser.add_argument("-t", "--data_type", type=str,default=None, dest="data_type", help="type of data used to train RNN")
+    parser.add_argument("--cut", type=int,default=0, dest="cut", help="Whether or not to plot using a final cut defined in RNN script")
     args = parser.parse_args()
 
+    use_cut = bool(args.cut)
     no_hits = args.hits
     no_epochs = args.epochs
     decay = args.decay
@@ -200,9 +204,9 @@ def main(config=1):
     input_rel_time  = Reshape( (-1,1), name="reshaped_rel_time" )(Lambda( lambda x: x[:,:,1], name="input_rel_time" )(input_data))  # slice out the relative time
     input_charge    = Reshape( (-1,1), name="reshaped_charge" )(Lambda( lambda x: x[:,:,2], name="input_charge" )(input_data))    # slice out the charge
 
-    geometry_file = h5py.File("/mnt/scratch/priesbr1/Processed_Files/geometry_upgrade.hdf5",'r') ########
-    pmt_positions = np.array(geometry_file["positions"][:]) ########
-    pmt_directions = np.array(geometry_file["directions"][:]) ########
+#    geometry_file = h5py.File("/mnt/scratch/priesbr1/Processed_Files/geometry_upgrade.hdf5",'r') ########
+#    pmt_positions = np.array(geometry_file["positions"][:]) ########
+#    pmt_directions = np.array(geometry_file["directions"][:]) ########
     
     embedding_pmt_index = Embedding(input_dim=vocab_size,
                                     output_dim=5,
@@ -242,7 +246,8 @@ def main(config=1):
     model.compile(optimizer=opt, loss=customLoss, metrics=[energy_loss, direction_loss, energy_uncertainty_loss, direction_uncertainty_loss])
     
     model.summary()
-
+    #TEMPORARY HACK TO LOAD AN RNN'S OLD WEIGHTs
+    save_folder_name = "/mnt/research/IceCube/willey/Upgrade_RNN/Outputs/run_100_epochs_1457_1458_cleaned_0to1000_CC_vertex_start_DC_energyMAPE_lr-3_250hits/"
     # get all files
     checkpoint_files = glob.glob("%sweights.?????.hdf5"%save_folder_name)
     checkpoint_files.sort()
@@ -325,7 +330,6 @@ def main(config=1):
         val_metrics = model.evaluate_generator(gen_val)
 
     print("Testing model")
-
     for i in range(len(gen_test)-1):
         batch_features, batch_labels, batch_weights = gen_test[i]
         if reco: batch_reco = gen_test.get_reco(i)
@@ -336,7 +340,9 @@ def main(config=1):
             labels_predicted_raw = batch_labels_predicted
             if reco: labels_reco = batch_reco
             weights_raw = batch_weights
+            features_raw = batch_features
         else:
+            features_raw         = np.append(features_raw,         batch_features,         axis=0)
             labels_raw           = np.append(labels_raw,           batch_labels,           axis=0)
             labels_predicted_raw = np.append(labels_predicted_raw, batch_labels_predicted, axis=0)
             if reco: labels_reco = np.append(labels_reco, batch_reco, axis=-1)
@@ -351,6 +357,7 @@ def main(config=1):
     labels_predicted = labels_predicted_raw#gen.untransform_labels(labels_predicted_raw)
     labels = labels_raw#gen.untransform_labels(labels_raw)
     weights = weights_raw
+    features = features_raw
 
     energy_predicted = labels_predicted[:,0]
     energy_true = labels[:,0]
@@ -394,7 +401,7 @@ def main(config=1):
     #bars1 = ax.bar(np.arange(2), [trueTracks, trueCascades], 0.25, color="SkyBlue")
     #bars2 = ax.bar(np.arange(2)+0.5*np.ones(2), [falseTracks, falseCascades], 0.25, color="IndianRed")
     #ax.set_title("Track vs. Cascade classification results")
-    #ax.set_xticks(np.arange(4)/2)
+    #ax.set_xticks(np.a:range(4)/2)
     #ax.set_xticklabels(("True Tracks", "False Tracks", "True Cascades", "False Cascades"))
     #imgname = save_folder_name+"class.png"
     #plt.savefig(imgname)
@@ -406,6 +413,62 @@ def main(config=1):
     r_sigma = np.sqrt(np.divide((dx_predicted*dx_sigma)**2+(dy_predicted*dy_sigma)**2+(dz_predicted*dz_sigma)**2,r_predicted**2))
     zenith_sigma = np.degrees(np.sqrt(np.divide((dz_predicted*r_sigma)**2+(r_predicted*dz_sigma)**2,r_predicted**2*(r_predicted**2-dz_predicted**2))))
     azimuth_sigma = np.degrees(np.sqrt(np.divide((dx_sigma*dy_predicted)**2+(dy_sigma*dx_predicted)**2,(dx_predicted**2+dy_predicted**2)**2)))
+   
+    if use_cut:
+        # Making a cut based on some identification of "Non-reconstructable events" to (hopefully) only plot the reconstructable ones 
+        # Cut has 0 affect on training or testing sample, merely plotting different recos to see if NREs have multivariate correlation
+        
+        #If an event has NRE_frac_err*100 % fractional uncertainty in E, ignore it 
+        NRE_frac_err = 2
+        #If an event has an uncertainty of .4 in each direction unit vector, ignore it
+        NRE_mask = np.logical_and(np.logical_or(dx_sigma < .4, dy_sigma < .4, dz_sigma < .4), energy_sigma/energy_predicted < NRE_frac_err)
+        #Eplot_mask = np.logical_and(energy_predicted > 3, energy_predicted < 300)
+        #NRE_mask = np.logical_and(NRE_mask, Eplot_mask)
+
+
+        print("Uncut size of outputs", NRE_mask.shape[0] )
+        print("Number of events filtered by NRE mask:", np.sum(~NRE_mask))
+        print('type:',type(features))
+        print('shape:',np.shape(features))
+        np.save("features", np.array(features))
+        np.save(save_folder_name + "total_events", np.array(labels))
+        np.save(save_folder_name + "cut_events", np.array(labels)[~NRE_mask])    
+ 
+        #sample weights 
+        cut_weights = weights[~NRE_mask]
+
+        #plot distribution of events cut by the NRE mask 
+        # cut 1d plots the relative truth distribution of cut events vs the sample to see if they vary 
+        if not use_log_energy:
+            plot_cut1d(energy_true[~NRE_mask], energy_true, min(energy_true), max(energy_true), "Energy [E/Gev]", cut_weights=cut_weights, uncut_weights = weights, log = True, gen_filename=save_folder_name)
+        plot_cut1d(dx_true[~NRE_mask], dx_true, -1.0, 1.0, "dx [m]", cut_weights=cut_weights, uncut_weights = weights, gen_filename=save_folder_name)
+        plot_cut1d(dy_true[~NRE_mask], dy_true, -1.0, 1.0, "dy [m]", cut_weights=cut_weights, uncut_weights = weights, gen_filename=save_folder_name)
+        plot_cut1d(dz_true[~NRE_mask], dz_true, -1.0, 1.0, "dz [m]", cut_weights=cut_weights, uncut_weights = weights, gen_filename=save_folder_name)
+        plot_cut1d(azimuth_true[~NRE_mask], azimuth_true, 0, 360, "Azimuth [degrees]", cut_weights=cut_weights, uncut_weights = weights, gen_filename=save_folder_name)  
+        plot_cut1d(np.cos(zenith_true[~NRE_mask]*np.pi/180), np.cos(zenith_true*np.pi/180), -1, 1, "Cos(Zenith)", cut_weights=cut_weights, uncut_weights = weights, gen_filename=save_folder_name)  
+    
+        energy_predicted = energy_predicted[NRE_mask]
+        energy_true = energy_true[NRE_mask]
+        energy_sigma = energy_sigma[NRE_mask]
+        dx_predicted = dx_predicted[NRE_mask]
+        dx_true = dx_true[NRE_mask]
+        dx_sigma = dx_sigma[NRE_mask]
+        dy_predicted = dy_predicted[NRE_mask]
+        dy_true = dy_true[NRE_mask]
+        dy_sigma = dy_sigma[NRE_mask]
+        dz_predicted = dz_predicted[NRE_mask]
+        dz_true = dz_true[NRE_mask]
+        dz_sigma = dz_sigma[NRE_mask]
+        r_predicted = r_predicted[NRE_mask]
+        r_sigma = r_sigma[NRE_mask]
+        zenith_true = zenith_true[NRE_mask]
+        zenith_predicted = zenith_predicted[NRE_mask]
+        azimuth_true = azimuth_true[NRE_mask]
+        azimuth_predicted = azimuth_predicted[NRE_mask]
+        zenith_sigma = zenith_sigma[NRE_mask]
+        azimuth_sigma = azimuth_sigma[NRE_mask]
+        weights = weights[NRE_mask]
+
 
     #Make plots
     if use_log_energy:
@@ -416,7 +479,9 @@ def main(config=1):
         plot_2dhist(energy_true, energy_predicted, min(energy_true), max(energy_true), "Energy [GeV]", weights, gen_filename=save_folder_name)
         plot_2dhist_contours(energy_true, energy_predicted, min(energy_true), max(energy_true), "Energy [GeV]", weights, gen_filename=save_folder_name)
         plot_1dhist(energy_true, energy_predicted, min(energy_true), max(energy_true), "Energy [GeV]", weights, gen_filename=save_folder_name)
-    
+        plot_2dhist(energy_true, energy_predicted, min(energy_true), 100, "Energy_CutView", weights, gen_filename=save_folder_name)
+        plot_2dhist_contours(energy_true, energy_predicted, min(energy_true), 100, "Energy_CutView", weights, gen_filename=save_folder_name)
+        plot_2dhist(energy_predicted, energy_sigma, min(energy_predicted), 20, "Pred_EnergyUnc_CutView", weights, gen_filename=save_folder_name)
     if reco:
         plot_error_vs_reco(energy_true, energy_predicted, energy_reco, min(energy_true), max(energy_true), "Energy [GeV]", gen_filename=save_folder_name)
         plot_error_vs_reco(azimuth_true, azimuth_predicted, azimuth_reco, 0, 360, "Azimuth [degrees]", gen_filename=save_folder_name)
@@ -425,12 +490,22 @@ def main(config=1):
         plot_error_vs_reco(azimuth_true, azimuth_predicted, azimuth_reco, min(energy_true), max(energy_true), "Azimuth [degrees]", quantity2="Energy [GeV]", x=labels[:,0], gen_filename=save_folder_name)
         plot_error_vs_reco(zenith_true, zenith_predicted, zenith_reco, min(energy_true), max(energy_true), "Zenith [degrees]", quantity2="Energy [GeV]", x=labels[:,0], gen_filename=save_folder_name)
     else:
-        plot_error(energy_true, energy_predicted, min(energy_true), max(energy_true), "Energy [GeV]", gen_filename=save_folder_name)
+        plot_error(energy_true, energy_predicted, 0, 1000, "Energy [GeV]", gen_filename=save_folder_name)
         plot_error(azimuth_true, azimuth_predicted, 0, 360, "Azimuth [degrees]", gen_filename=save_folder_name)
         plot_error(zenith_true, zenith_predicted, 0, 180, "Zenith [degrees]", gen_filename=save_folder_name)
-        plot_error(azimuth_true, azimuth_predicted, min(energy_true), max(energy_true), "Azimuth [degrees]", "Energy [GeV]", energy_true, gen_filename=save_folder_name)
-        plot_error(zenith_true, zenith_predicted, min(energy_true), max(energy_true), "Zenith [degrees]", "Energy [GeV]", energy_true, gen_filename=save_folder_name)
+        plot_error(azimuth_true, azimuth_predicted, 0, 100, "Azimuth [degrees]", "Energy [GeV]", energy_true, gen_filename=save_folder_name)
+        plot_error(zenith_true, zenith_predicted, 0, 100, "Zenith [degrees]", "Energy [GeV]", energy_true, gen_filename=save_folder_name)
+        plot_error(np.cos(zenith_true*np.pi/180), np.cos(zenith_predicted*np.pi/180), 0, 100, "Cos(Zenith)", "Energy [GeV]", energy_true, gen_filename=save_folder_name)
 
+    plot_2dcomp(dx_predicted, dy_predicted, -1.0, -1.0, 1.0, 1.0, "dx_pred [m]", "dy_pred [m]", weights, gen_filename=save_folder_name)
+    plot_2dcomp(dx_predicted, (dx_predicted-dx_true), min(dx_predicted), min(dx_predicted-dx_true), max(dx_predicted), max(dx_predicted-dx_true), "dx_pred [m]", "dx_error [m]", weights, gen_filename=save_folder_name)
+    plot_2dcomp(dy_predicted, (dy_predicted-dy_true), min(dy_predicted), min(dy_predicted-dy_true), max(dy_predicted), max(dy_predicted-dy_true), "dy_pred [m]", "dy_error [m]", weights, gen_filename=save_folder_name)
+    plot_2dcomp(dz_predicted, (dz_predicted-dz_true), min(dz_predicted), min(dz_predicted-dz_true), max(dz_predicted), max(dz_predicted-dz_true), "dz_pred [m]", "dz_error [m]", weights, gen_filename=save_folder_name)
+    plot_2dcomp(dx_predicted, dx_sigma, min(dx_predicted), min(dx_sigma), max(dx_predicted), max(dx_sigma), "dx_pred [m]", "dx_unc [m]", weights, gen_filename=save_folder_name)
+    plot_2dcomp(dy_predicted, dy_sigma, min(dy_predicted), min(dy_sigma), max(dy_predicted), max(dy_sigma), "dy_pred [m]", "dy_unc [m]", weights, gen_filename=save_folder_name)
+    plot_2dcomp(dz_predicted, dz_sigma, min(dz_predicted), min(dz_sigma), max(dz_predicted), max(dz_sigma), "dz_pred [m]", "dz_unc [m]", weights, gen_filename=save_folder_name)
+    
+    plot_2dhist_contours(energy_true, energy_predicted, min(energy_true), 100, "Energy_CutView", weights, gen_filename=save_folder_name)
     plot_2dhist(dx_true, dx_predicted, -1.0, 1.0, "dx [m]", weights, gen_filename=save_folder_name)
     plot_2dhist(dy_true, dy_predicted, -1.0, 1.0, "dy [m]", weights, gen_filename=save_folder_name)
     plot_2dhist(dz_true, dz_predicted, -1.0, 1.0, "dz [m]", weights, gen_filename=save_folder_name)
@@ -453,9 +528,9 @@ def main(config=1):
     plot_error(dx_true, dx_predicted, min(energy_true), max(energy_true), "dx [m]", "Energy [GeV]", energy_true, gen_filename=save_folder_name)
     plot_error(dy_true, dy_predicted, min(energy_true), max(energy_true), "dy [m]", "Energy [GeV]", energy_true, gen_filename=save_folder_name)
     plot_error(dz_true, dz_predicted, min(energy_true), max(energy_true), "dz [m]", "Energy [GeV]", energy_true, gen_filename=save_folder_name)
-    plot_error_contours(energy_true, energy_predicted, min(energy_true), max(energy_true), "Energy [GeV]", gen_filename=save_folder_name)
+    plot_error_contours(energy_true, energy_predicted, 0, 100, "Energy [GeV]", gen_filename=save_folder_name)
     plot_error_contours(np.cos(zenith_true*np.pi/180), np.cos(zenith_predicted*np.pi/180), -1.0, 1.0, "Cos(Zenith)", gen_filename=save_folder_name)
-    plot_error_contours(np.cos(zenith_true*np.pi/180), np.cos(zenith_predicted*np.pi/180), min(energy_true), max(energy_true), "Cos(Zenith)", "Energy [GeV]", energy_true, gen_filename=save_folder_name)
+    plot_error_contours(np.cos(zenith_true*np.pi/180), np.cos(zenith_predicted*np.pi/180), 3, 100, "Cos(Zenith)", "Energy [GeV]", energy_true, gen_filename=save_folder_name)
     plot_uncertainty(energy_true, energy_predicted, energy_sigma, "Energy [GeV]", weights, gen_filename=save_folder_name)
     plot_uncertainty(dx_true, dx_predicted, dx_sigma, "dx [m]", weights, gen_filename=save_folder_name)
     plot_uncertainty(dy_true, dy_predicted, dy_sigma, "dy [m]", weights, gen_filename=save_folder_name)
@@ -485,7 +560,7 @@ def main(config=1):
         avg_azi_PL_err = np.mean(azi_PL_err)
         std_zen_PL_err = np.std(zen_PL_err)
         std_eng_PL_err = np.std(eng_PL_err)
-        std_azi_PL_err = np.std(azi_PL_err)
+        std_azi_PL_err = np.std(azi_PL_err)    
         print("PegLeg")
         print("Energy: average fractional error = "+str(avg_eng_PL_err)+", sigma = "+str(std_eng_PL_err))
         print("Azimuth: average absolute error = "+str(avg_azi_PL_err)+", sigma = "+str(std_azi_PL_err))
