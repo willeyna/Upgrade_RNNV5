@@ -168,9 +168,12 @@ def plot_uncertainty(true, predicted, sigma, quantity, weights, gen_filename="pa
 
     del sigma_overflow
 
-def plot_uncertainty_2d(true, predicted, sigma, minimum, maximum, quantity, weights, gen_filename="path/save_folder/"):
+def plot_uncertainty_2d(true, predicted, sigma, minimum, maximum, quantity, weights, gen_filename="path/save_folder/", frac = False):
 
-    errors = np.abs(predicted-true)
+    if frac:
+        errors = np.abs((predicted - true)/true) 
+    else:
+        errors = np.abs(predicted-true)
 
     if quantity == "Azimuth [degrees]":
         errors = np.array([errors[i] if (errors[i] < 180) else (360-errors[i]) for i in range(len(errors))])
