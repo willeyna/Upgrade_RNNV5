@@ -81,7 +81,7 @@ def direction_uncertainty_loss(y_true, y_pred):
 def customLoss(y_true, y_pred):
     e_loss = energy_loss(y_true, y_pred) + energy_uncertainty_loss(y_true, y_pred)
     d_loss = direction_loss(y_true, y_pred) + direction_uncertainty_loss(y_true, y_pred)
-    loss = e_loss/700.0 + d_loss*8.0
+    loss = e_loss/700.0 +d_loss*8.0 
 
     #loss = 0
     #for i in range(K.int_shape(y_pred)[1]):
@@ -246,8 +246,7 @@ def main(config=1):
     model.compile(optimizer=opt, loss=customLoss, metrics=[energy_loss, direction_loss, energy_uncertainty_loss, direction_uncertainty_loss])
     
     model.summary()
-    #TEMPORARY HACK TO LOAD AN RNN'S OLD WEIGHTs
-    save_folder_name = "/mnt/research/IceCube/willey/Upgrade_RNN/Outputs/run_100_epochs_1457_1458_cleaned_0to1000_CC_vertex_start_DC_energyMAPE_lr-3_250hits/"
+
     # get all files
     checkpoint_files = glob.glob("%sweights.?????.hdf5"%save_folder_name)
     checkpoint_files.sort()
