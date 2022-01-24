@@ -64,7 +64,7 @@ def normalize(input_file, input_labels, use_log_energy):
     return normalization
 
 def energy_loss(y_true, y_pred):
-    return keras.losses.mean_absolute_percentage_error(y_true[:,0], y_pred[:,0])
+    return keras.losses.mean_absolute_percentage_error(y_true[:,0], y_pred[:,0])/1000.0
 
 def direction_loss(y_true, y_pred):
     return keras.losses.mean_squared_error(y_true[:,1], y_pred[:,2]) + keras.losses.mean_squared_error(y_true[:,2], y_pred[:,3]) + keras.losses.mean_squared_error(y_true[:,3], y_pred[:,4])
@@ -80,7 +80,7 @@ def direction_uncertainty_loss(y_true, y_pred):
 
 def customLoss(y_true, y_pred):
     #drop normalization in e_loss to revert 
-    e_loss = energy_loss(y_true, y_pred)/100 + energy_uncertainty_loss(y_true, y_pred)
+    e_loss = energy_loss(y_true, y_pred) + energy_uncertainty_loss(y_true, y_pred)
     d_loss = direction_loss(y_true, y_pred) + direction_uncertainty_loss(y_true, y_pred)
     loss = e_loss + d_loss
 
@@ -417,14 +417,10 @@ def main(config=1):
     if use_cut:
         # Making a cut based on some identification of "Non-reconstructable events" to (hopefully) only plot the reconstructable ones 
         # Cut has 0 affect on training or testing sample, merely plotting different recos to see if NREs have multivariate correlation
-        
-        #If an event has NRE_frac_err*100 % fractional uncertainty in E, ignore it 
-        NRE_frac_err = 2
-        #If an event has an uncertainty of .4 in each direction unit vector, ignore it
-        NRE_mask = np.logical_and(np.logical_or(dx_sigma < .4, dy_sigma < .4, dz_sigma < .4), energy_sigma < NRE_frac_err)
-        #Eplot_mask = np.logical_and(energy_predicted > 3, energy_predicted < 300)
-        #NRE_mask = np.logical_and(NRE_mask, Eplot_mask)
 
+        #FRAC E SIGMA 4D CUT
+        #T- UNCUT F- CUT
+        NRE_mask = np.logical_or.reduce((dx_sigma < .45,  dy_sigma < .45, dz_sigma < .45,  energy_sigma < .55))
 
         print("Uncut size of outputs", NRE_mask.shape[0] )
         print("Number of events filtered by NRE mask:", np.sum(~NRE_mask))
@@ -481,7 +477,7 @@ def main(config=1):
         plot_1dhist(energy_true, energy_predicted, min(energy_true), max(energy_true), "Energy [GeV]", weights, gen_filename=save_folder_name)
         plot_2dhist(energy_true, energy_predicted, min(energy_true), 100, "Energy_CutView", weights, gen_filename=save_folder_name)
         plot_2dhist_contours(energy_true, energy_predicted, min(energy_true), 100, "Energy_CutView", weights, gen_filename=save_folder_name)
-        plot_2dhist(energy_predicted, energy_sigma, min(energy_predicted), 20, "Pred_EnergyUnc_CutView", weights, gen_filename=save_folder_name)
+        plot_2dhist(energy_predicted, energy_sigma, 0, 2, "Pred_EnergyUnc_CutView", weights, gen_filename=save_folder_name)
     if reco:
         plot_error_vs_reco(energy_true, energy_predicted, energy_reco, min(energy_true), max(energy_true), "Energy [GeV]", gen_filename=save_folder_name)
         plot_error_vs_reco(azimuth_true, azimuth_predicted, azimuth_reco, 0, 360, "Azimuth [degrees]", gen_filename=save_folder_name)
@@ -504,7 +500,9 @@ def main(config=1):
     plot_2dcomp(dx_predicted, dx_sigma, min(dx_predicted), min(dx_sigma), max(dx_predicted), max(dx_sigma), "dx_pred [m]", "dx_unc [m]", weights, gen_filename=save_folder_name)
     plot_2dcomp(dy_predicted, dy_sigma, min(dy_predicted), min(dy_sigma), max(dy_predicted), max(dy_sigma), "dy_pred [m]", "dy_unc [m]", weights, gen_filename=save_folder_name)
     plot_2dcomp(dz_predicted, dz_sigma, min(dz_predicted), min(dz_sigma), max(dz_predicted), max(dz_sigma), "dz_pred [m]", "dz_unc [m]", weights, gen_filename=save_folder_name)
-    
+    plot_2dcomp(dx_sigma, dy_sigma, min(dx_sigma), min(dy_sigma), max(dx_sigma), max(dy_sigma), "dx_unc [m]", "dy_unc [m]", weights, gen_filename=save_folder_name)
+    plot_2dcomp(dx_sigma, energy_sigma, min(dx_sigma), min(energy_sigma), max(dx_sigma), max(energy_sigma), "dx_unc [m]", "energy_unc [m]", weights, gen_filename=save_folder_name)
+
     plot_2dhist_contours(energy_true, energy_predicted, min(energy_true), 100, "Energy_CutView", weights, gen_filename=save_folder_name)
     plot_2dhist(dx_true, dx_predicted, -1.0, 1.0, "dx [m]", weights, gen_filename=save_folder_name)
     plot_2dhist(dy_true, dy_predicted, -1.0, 1.0, "dy [m]", weights, gen_filename=save_folder_name)
